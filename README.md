@@ -97,11 +97,11 @@ Your response gets sent back to the AI to continue the workflow.
 
 ### Cross-Platform Native Dialogs
 
-| Platform    | Technology  | Features                               |
-| ----------- | ----------- | -------------------------------------- |
-| **macOS**   | `osascript` | Custom Cursor icon, dialog timeout     |
-| **Linux**   | `zenity`    | Custom window icon, dialog timeout     |
-| **Windows** | `tkinter`   | Native Windows dialogs, dialog timeout |
+| Platform    | Technology  | Features               |
+| ----------- | ----------- | ---------------------- |
+| **macOS**   | `osascript` | Custom Cursor icon     |
+| **Linux**   | `zenity`    | Custom window icon     |
+| **Windows** | `tkinter`   | Native Windows dialogs |
 
 ### Automatic Fallbacks
 

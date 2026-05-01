@@ -83,12 +83,8 @@ def test_windows_dialog_applies_dpi_setup(monkeypatch):
 
     fake_tk = types.ModuleType("tkinter")
     fake_tk.Tk = lambda: fake_root
-    fake_tk.simpledialog = types.SimpleNamespace(
-        askstring=lambda title, question, parent=None: events.append(
-            ("askstring", title, question, parent)
-        )
-        or "ok"
-    )
+    fake_tk.scrolledtext = types.SimpleNamespace()
+    fake_tk.ttk = types.SimpleNamespace()
 
     monkeypatch.setitem(sys.modules, "tkinter", fake_tk)
 
@@ -100,6 +96,14 @@ def test_windows_dialog_applies_dpi_setup(monkeypatch):
         handler, "_configure_windows_tk_scaling", lambda root: events.append(("scale", root))
     )
     monkeypatch.setattr(handler, "_set_windows_icon", lambda root: events.append(("icon", root)))
+    monkeypatch.setattr(
+        handler,
+        "_ask_windows_multiline",
+        lambda root, tk, scrolledtext, ttk, question, timeout: events.append(
+            ("ask-multiline", root, tk, scrolledtext, ttk, question, timeout)
+        )
+        or "ok",
+    )
 
     result = asyncio.run(handler._windows_dialog("Question?", 10))
 
@@ -109,8 +113,14 @@ def test_windows_dialog_applies_dpi_setup(monkeypatch):
         ("scale", fake_root),
         "withdraw",
         ("icon", fake_root),
-        ("after", 10000, fake_root.destroy),
-        ("askstring", "🤖 Cursor AI Assistant", "Question?", fake_root),
-        ("after-cancel", "timeout-id"),
+        (
+            "ask-multiline",
+            fake_root,
+            fake_tk,
+            fake_tk.scrolledtext,
+            fake_tk.ttk,
+            "Question?",
+            10,
+        ),
         "destroy",
     ]

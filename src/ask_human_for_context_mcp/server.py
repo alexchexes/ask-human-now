@@ -1,7 +1,7 @@
 import asyncio
 import subprocess
 import platform
-from typing import Any, Optional, cast
+from typing import Any, Optional
 from mcp.server.fastmcp import FastMCP
 from starlette.applications import Starlette
 from mcp.server.sse import SseServerTransport
@@ -191,15 +191,14 @@ class GUIDialogHandler:
             return None
 
     async def _windows_dialog(self, question: str, timeout: int) -> Optional[str]:
-        """Windows dialog using tkinter with custom Cursor logo."""
+        """Windows dialog using tkinter with multiline response support."""
         root = None
         try:
             import tkinter as tk
-            from tkinter import simpledialog
+            from tkinter import scrolledtext, ttk
 
             self._enable_windows_dpi_awareness()
 
-            # Create a simple dialog using tkinter
             root = tk.Tk()
             self._configure_windows_tk_scaling(root)
             root.withdraw()  # Hide the main window
@@ -207,13 +206,7 @@ class GUIDialogHandler:
             # Try to set custom icon from PNG (converted to ICO)
             self._set_windows_icon(root)
 
-            return self._ask_windows_string(
-                root,
-                simpledialog,
-                "🤖 Cursor AI Assistant",
-                question,
-                timeout,
-            )
+            return self._ask_windows_multiline(root, tk, scrolledtext, ttk, question, timeout)
         except Exception:
             return None
         finally:
@@ -223,23 +216,124 @@ class GUIDialogHandler:
                 except Exception:
                     pass
 
-    def _ask_windows_string(
+    def _ask_windows_multiline(
         self,
         root: Any,
-        simpledialog: Any,
-        title: str,
+        tk: Any,
+        scrolledtext: Any,
+        ttk: Any,
         question: str,
         timeout: int,
     ) -> Optional[str]:
-        """Ask for a Windows string response and close it when timeout expires."""
-        timeout_id = root.after(timeout * 1000, root.destroy)
-        try:
-            return cast(Optional[str], simpledialog.askstring(title, question, parent=root))
-        finally:
-            try:
-                root.after_cancel(timeout_id)
-            except Exception:
-                pass
+        """Ask for a multiline Windows response and close it when timeout expires."""
+        result: dict[str, Optional[str]] = {"value": None}
+        dialog = tk.Toplevel(root)
+        dialog.title("🤖 Cursor AI Assistant")
+        dialog.geometry(
+            self._get_windows_dialog_geometry(
+                root.winfo_screenwidth(),
+                root.winfo_screenheight(),
+            )
+        )
+        dialog.minsize(320, 260)
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(1, weight=1)
+        self._set_windows_icon(dialog)
+
+        prompt_box = scrolledtext.ScrolledText(
+            dialog,
+            height=self._get_windows_prompt_height(question),
+            wrap=tk.WORD,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=2,
+            pady=2,
+            takefocus=False,
+        )
+        prompt_box.grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 8))
+        prompt_box.insert("1.0", question)
+        prompt_box.configure(state=tk.DISABLED)
+
+        answer_box = scrolledtext.ScrolledText(
+            dialog,
+            height=8,
+            wrap=tk.WORD,
+            undo=True,
+        )
+        answer_box.grid(row=1, column=0, sticky="nsew", padx=16, pady=(0, 8))
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.grid(row=2, column=0, sticky="e", padx=16, pady=(0, 16))
+
+        timeout_id: Optional[str] = None
+
+        def close_dialog() -> None:
+            nonlocal timeout_id
+            if timeout_id is not None:
+                try:
+                    dialog.after_cancel(timeout_id)
+                except Exception:
+                    pass
+                timeout_id = None
+            if dialog.winfo_exists():
+                dialog.destroy()
+
+        def submit() -> None:
+            result["value"] = answer_box.get("1.0", "end-1c")
+            close_dialog()
+
+        def cancel() -> None:
+            result["value"] = None
+            close_dialog()
+
+        def submit_from_keyboard(event: Any) -> str:
+            submit()
+            return "break"
+
+        def cancel_from_keyboard(event: Any) -> str:
+            cancel()
+            return "break"
+
+        ok_button = ttk.Button(button_frame, text="OK", command=submit)
+        cancel_button = ttk.Button(button_frame, text="Cancel", command=cancel)
+        ok_button.grid(row=0, column=0, padx=(0, 8))
+        cancel_button.grid(row=0, column=1)
+
+        answer_box.bind("<Control-Return>", submit_from_keyboard)
+        answer_box.bind("<Control-KP_Enter>", submit_from_keyboard)
+        dialog.bind("<Escape>", cancel_from_keyboard)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+
+        timeout_id = dialog.after(timeout * 1000, cancel)
+        self._show_windows_dialog(root, dialog, answer_box)
+        root.wait_window(dialog)
+
+        return result["value"]
+
+    def _get_windows_dialog_geometry(self, screen_width: int, screen_height: int) -> str:
+        """Return a bounded, centered geometry string for the Windows dialog."""
+        available_width = max(320, screen_width - 80)
+        available_height = max(260, screen_height - 80)
+        width = min(760, max(500, screen_width // 2), available_width)
+        height = min(520, max(360, screen_height // 2), available_height)
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+        return f"{width}x{height}+{x}+{y}"
+
+    def _get_windows_prompt_height(self, question: str) -> int:
+        """Estimate prompt display height in text lines without growing unbounded."""
+        lines = question.splitlines() or [""]
+        wrapped_line_count = sum(max(1, (len(line) // 90) + 1) for line in lines)
+        return min(8, max(3, wrapped_line_count))
+
+    def _show_windows_dialog(self, root: Any, dialog: Any, initial_focus: Any) -> None:
+        """Show the dialog using Tkinter's visibility-safe dialog sequence."""
+        if root.winfo_viewable():
+            dialog.transient(root)
+        dialog.lift()
+        initial_focus.focus_set()
+        dialog.wait_visibility()
+        dialog.grab_set()
 
     def _escape_for_applescript(self, text: str) -> str:
         """Escape text for AppleScript."""
