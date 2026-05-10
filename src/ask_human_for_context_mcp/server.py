@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+import locale
 import platform
 from typing import Any, Optional, cast
 
@@ -16,10 +17,7 @@ mcp = FastMCP("ask-human-for-context")
 
 DEFAULT_DIALOG_TIMEOUT_SECONDS = 120
 DEFAULT_DIALOG_TITLE = "🤖 Cursor AI Assistant"
-TIMING_INFO_TIMEOUT_NOTE = (
-    "Note: Actual wait may be shorter if your MCP client, agent, or other tooling "
-    "enforces a lower timeout."
-)
+TIMING_INFO_TIMEOUT_NOTE = "actual wait may be shorter"
 
 
 def resolve_dialog_title(dialog_title: Optional[str] = None) -> str:
@@ -31,9 +29,9 @@ def resolve_dialog_title(dialog_title: Optional[str] = None) -> str:
 
 
 def format_dialog_timestamp(moment: dt.datetime) -> str:
-    """Format dialog timestamps with a locale-aware representation when available."""
+    """Format dialog timestamps using the current locale's short date/time format."""
     try:
-        formatted = moment.astimezone().strftime("%c").strip()
+        formatted = moment.astimezone().strftime("%x %X").strip()
         if formatted:
             return formatted
     except Exception:
@@ -42,13 +40,21 @@ def format_dialog_timestamp(moment: dt.datetime) -> str:
     return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def initialize_time_locale() -> None:
+    """Initialize process-wide time formatting from the OS locale once at startup."""
+    try:
+        locale.setlocale(locale.LC_TIME, "")
+    except Exception:
+        pass
+
+
 def build_timing_info_block(issued_at: dt.datetime, timeout_seconds: int) -> str:
     """Build the optional timing metadata shown in dialogs."""
     answer_until = issued_at + dt.timedelta(seconds=timeout_seconds)
     return (
-        f"Issued at: {format_dialog_timestamp(issued_at)}\n"
-        f"Answer until: {format_dialog_timestamp(answer_until)}\n"
-        f"{TIMING_INFO_TIMEOUT_NOTE}"
+        f"Issued at: {format_dialog_timestamp(issued_at)}"
+        f" | Answer until: {format_dialog_timestamp(answer_until)}"
+        f" ({TIMING_INFO_TIMEOUT_NOTE})"
     )
 
 
@@ -426,21 +432,28 @@ async def asking_user_missing_context(question: str, context: str = "") -> str:
         return "❌ Error: 'context' is too long (max 2000 characters). Please provide a more concise context."
 
     try:
+        separator = "─" * 40
         # Format question with context for better user experience
-        if context.strip():
+        if show_timing_info and context.strip():
+            full_question = (
+                f"Context:\n{context.strip()}\n\n"
+                f"{separator}\n\n"
+                f"Question:\n{question.strip()}\n\n"
+                f"{separator}\n\n"
+                f"{build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)}"
+            )
+        elif show_timing_info:
+            full_question = (
+                f"Question:\n{question.strip()}\n\n"
+                f"{separator}\n\n"
+                f"{build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)}"
+            )
+        elif context.strip():
             # Format context clearly with visual separation
             formatted_context = f"📋 Missing Context:\n{context.strip()}\n"
-            separator = "─" * 40
             full_question = f"{formatted_context}\n{separator}\n\n❓ Question:\n{question.strip()}"
         else:
             full_question = f"❓ {question.strip()}"
-
-        if show_timing_info:
-            timing_info = build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)
-            if context.strip():
-                full_question = f"{full_question}\n\n{timing_info}"
-            else:
-                full_question = f"❓ Question:\n{question.strip()}\n\n{timing_info}"
 
         # Get user input via GUI dialog with timeout
         response = await dialog_handler.get_user_input(full_question, timeout_seconds)
@@ -583,6 +596,7 @@ def main() -> None:
 
     global dialog_handler
     global dialog_timeout_seconds
+    initialize_time_locale()
     global show_timing_info
     dialog_handler = GUIDialogHandler(dialog_title=args.dialog_title)
     dialog_timeout_seconds = args.timeout_seconds

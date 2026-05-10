@@ -248,6 +248,8 @@ ask-human-for-context-mcp --transport stdio --show-timing-info
 When enabled, dialogs also show a note that the actual wait can still be shorter if the
 MCP client or agent applies a lower timeout.
 
+The timing line uses the current OS short date/time format where available.
+
 ## 🔍 Tool Reference
 
 ### `asking_user_missing_context`
