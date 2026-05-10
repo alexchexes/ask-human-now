@@ -152,7 +152,7 @@ pip install ask-human-for-context-mcp
 # Clone and install for development
 git clone https://github.com/galperetz/ask-human-for-context-mcp.git
 cd ask-human-for-context-mcp
-pip install -e .
+pip install -e ".[dev]"
 
 # Use in Cursor config (local development)
 {
@@ -283,16 +283,19 @@ result = asking_user_missing_context(
 
 ```bash
 # Install dependencies (using uv - recommended)
+# Installs the default dev dependency group.
 uv sync
 
 # Or using pip
-pip install -e .
+pip install -e ".[dev]"
 
 # Build package
 uv build
 
-# Run tests
+# Run checks
 pytest
+black --check .
+isort --check-only .
 ```
 
 ### Project Structure

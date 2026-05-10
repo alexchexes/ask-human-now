@@ -1,4 +1,5 @@
 """Tests for Windows-specific DPI handling."""
+
 import asyncio
 import sys
 import types
@@ -41,9 +42,7 @@ def test_configure_windows_tk_scaling_uses_window_dpi(monkeypatch):
             assert hwnd == 123
             return 120
 
-    fake_ctypes = types.SimpleNamespace(
-        windll=types.SimpleNamespace(user32=FakeUser32())
-    )
+    fake_ctypes = types.SimpleNamespace(windll=types.SimpleNamespace(user32=FakeUser32()))
 
     monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
 

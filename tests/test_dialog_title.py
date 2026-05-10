@@ -1,4 +1,5 @@
 """Tests for dialog title configuration."""
+
 import os
 import subprocess
 import sys

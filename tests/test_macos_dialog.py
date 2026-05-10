@@ -1,4 +1,5 @@
 """Tests for macOS dialog behavior."""
+
 import asyncio
 from unittest.mock import patch
 
