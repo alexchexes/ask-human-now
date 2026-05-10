@@ -33,7 +33,7 @@ def test_build_timing_info_block_contains_note(monkeypatch):
     assert block == (
         "Issued at: 10.05.2026 09:30:00"
         " | Answer until: 10.05.2026 09:31:30"
-        " (actual wait may be shorter)"
+        " (client may time out sooner)"
     )
 
 
@@ -102,7 +102,7 @@ def test_tool_appends_timing_info_when_enabled(monkeypatch):
         server,
         "build_timing_info_block",
         lambda issued_at, timeout_seconds: "Issued at: 10.05.2026 09:30:00 | "
-        "Answer until: 10.05.2026 09:31:30 (actual wait may be shorter)",
+        "Answer until: 10.05.2026 09:31:30 (client may time out sooner)",
     )
 
     result = asyncio.run(
@@ -122,5 +122,5 @@ def test_tool_appends_timing_info_when_enabled(monkeypatch):
         "Should I keep the current API shape?\n\n"
         f"{separator}\n\n"
         "Issued at: 10.05.2026 09:30:00 | Answer until: 10.05.2026 09:31:30 "
-        "(actual wait may be shorter)"
+        "(client may time out sooner)"
     )

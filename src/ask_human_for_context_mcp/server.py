@@ -17,7 +17,7 @@ from starlette.routing import Mount, Route
 mcp = FastMCP("ask-human-for-context")
 
 DEFAULT_DIALOG_TIMEOUT_SECONDS = 90
-TIMING_INFO_TIMEOUT_NOTE = "actual wait may be shorter"
+TIMING_INFO_TIMEOUT_NOTE = "client may time out sooner"
 
 
 def format_dialog_timestamp(moment: dt.datetime) -> str:
