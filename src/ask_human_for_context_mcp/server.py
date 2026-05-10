@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import platform
 from typing import Any, Optional, cast
 
@@ -15,6 +16,10 @@ mcp = FastMCP("ask-human-for-context")
 
 DEFAULT_DIALOG_TIMEOUT_SECONDS = 120
 DEFAULT_DIALOG_TITLE = "🤖 Cursor AI Assistant"
+TIMING_INFO_TIMEOUT_NOTE = (
+    "Note: Actual wait may be shorter if your MCP client, agent, or other tooling "
+    "enforces a lower timeout."
+)
 
 
 def resolve_dialog_title(dialog_title: Optional[str] = None) -> str:
@@ -23,6 +28,28 @@ def resolve_dialog_title(dialog_title: Optional[str] = None) -> str:
         return dialog_title.strip()
 
     return DEFAULT_DIALOG_TITLE
+
+
+def format_dialog_timestamp(moment: dt.datetime) -> str:
+    """Format dialog timestamps with a locale-aware representation when available."""
+    try:
+        formatted = moment.astimezone().strftime("%c").strip()
+        if formatted:
+            return formatted
+    except Exception:
+        pass
+
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def build_timing_info_block(issued_at: dt.datetime, timeout_seconds: int) -> str:
+    """Build the optional timing metadata shown in dialogs."""
+    answer_until = issued_at + dt.timedelta(seconds=timeout_seconds)
+    return (
+        f"Issued at: {format_dialog_timestamp(issued_at)}\n"
+        f"Answer until: {format_dialog_timestamp(answer_until)}\n"
+        f"{TIMING_INFO_TIMEOUT_NOTE}"
+    )
 
 
 # Custom exception classes for better error handling (Task 1.4)
@@ -344,6 +371,7 @@ class GUIDialogHandler:
 # Global dialog handler instance
 dialog_handler = GUIDialogHandler()
 dialog_timeout_seconds = DEFAULT_DIALOG_TIMEOUT_SECONDS
+show_timing_info = False
 
 
 @mcp.tool()
@@ -406,6 +434,13 @@ async def asking_user_missing_context(question: str, context: str = "") -> str:
             full_question = f"{formatted_context}\n{separator}\n\n❓ Question:\n{question.strip()}"
         else:
             full_question = f"❓ {question.strip()}"
+
+        if show_timing_info:
+            timing_info = build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)
+            if context.strip():
+                full_question = f"{full_question}\n\n{timing_info}"
+            else:
+                full_question = f"❓ Question:\n{question.strip()}\n\n{timing_info}"
 
         # Get user input via GUI dialog with timeout
         response = await dialog_handler.get_user_input(full_question, timeout_seconds)
@@ -536,12 +571,22 @@ def main() -> None:
         default=None,
         help="Dialog window title. Defaults to the built-in title.",
     )
+    parser.add_argument(
+        "--show-timing-info",
+        action="store_true",
+        help=(
+            "Add Issued at / Answer until lines to dialog text. Actual wait may still "
+            "be shorter if the MCP client or agent has a lower timeout."
+        ),
+    )
     args = parser.parse_args()
 
     global dialog_handler
     global dialog_timeout_seconds
+    global show_timing_info
     dialog_handler = GUIDialogHandler(dialog_title=args.dialog_title)
     dialog_timeout_seconds = args.timeout_seconds
+    show_timing_info = args.show_timing_info
 
     # Launch the server with the selected transport mode
     if args.transport == "stdio":

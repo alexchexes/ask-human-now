@@ -237,6 +237,17 @@ the client can stop waiting before this server closes the dialog. In Codex,
 configure `tool_timeout_sec = <seconds>` under
 `[mcp_servers.ask-human-for-context]` in `config.toml`.
 
+### Dialog Timing Metadata
+
+Use `--show-timing-info` to include `Issued at` and `Answer until` lines in the dialog text:
+
+```bash
+ask-human-for-context-mcp --transport stdio --show-timing-info
+```
+
+When enabled, dialogs also show a note that the actual wait can still be shorter if the
+MCP client or agent applies a lower timeout.
+
 ## 🔍 Tool Reference
 
 ### `asking_user_missing_context`
