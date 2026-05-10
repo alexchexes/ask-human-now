@@ -20,6 +20,8 @@ def test_main_module_execution():
     assert result.returncode == 0
     assert "transport" in result.stdout
     assert "--show-timing-info" in result.stdout
+    assert "--response-channel" in result.stdout
+    assert "--telegram" in result.stdout
 
 
 def test_installed_command():

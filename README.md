@@ -245,10 +245,30 @@ Use `--show-timing-info` to include `Issued at` and `Answer until` lines in the 
 ask-human-for-context-mcp --transport stdio --show-timing-info
 ```
 
-When enabled, dialogs also show a note that the actual wait can still be shorter if the
-MCP client or agent applies a lower timeout.
+When enabled, dialogs also show a note that the MCP client may time out sooner than the
+dialog itself.
 
 The timing line uses the current OS short date/time format where available.
+
+### Response Channels
+
+Use `--response-channel` to choose where replies are collected:
+
+- `dialog` - local native dialog only (default)
+- `telegram` - Telegram only
+- `both` - local dialog and Telegram at the same time; the first reply wins
+
+Configure Telegram with a single `--telegram` argument in the form
+`"<bot_token> <chat_id>"`:
+
+```bash
+ask-human-for-context-mcp --transport stdio --response-channel telegram --telegram "<bot_token> <chat_id>"
+```
+
+In `both` mode:
+
+- macOS and Linux try to close the local dialog when the Telegram reply arrives first
+- Windows keeps the current Tk dialog behavior; if Telegram wins first, the local dialog may stay open and any later answer from it will be ignored
 
 ## 🔍 Tool Reference
 

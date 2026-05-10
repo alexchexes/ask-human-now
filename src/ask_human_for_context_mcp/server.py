@@ -1,7 +1,12 @@
 import asyncio
 import datetime as dt
+import json
 import locale
 import platform
+import urllib.error
+import urllib.request
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any, Optional, cast
 
 import uvicorn
@@ -17,6 +22,8 @@ mcp = FastMCP("ask-human-for-context")
 
 DEFAULT_DIALOG_TIMEOUT_SECONDS = 120
 DEFAULT_DIALOG_TITLE = "🤖 Cursor AI Assistant"
+DEFAULT_RESPONSE_CHANNEL = "dialog"
+DEFAULT_TELEGRAM_POLL_TIMEOUT_SECONDS = 25
 TIMING_INFO_TIMEOUT_NOTE = "client may time out sooner"
 
 
@@ -48,6 +55,32 @@ def initialize_time_locale() -> None:
         pass
 
 
+@dataclass(frozen=True)
+class TelegramConfig:
+    """Bot token and target chat for Telegram-based prompting."""
+
+    bot_token: str
+    chat_id: str
+
+
+def parse_telegram_target(telegram_target: Optional[str]) -> Optional[TelegramConfig]:
+    """Parse '<bot_token> <chat_id>' from a single CLI argument."""
+    if telegram_target is None:
+        return None
+
+    target = telegram_target.strip()
+    if not target:
+        return None
+
+    parts = target.split(maxsplit=1)
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise ValueError(
+            "Telegram target must look like '<bot_token> <chat_id>' in a single argument."
+        )
+
+    return TelegramConfig(bot_token=parts[0].strip(), chat_id=parts[1].strip())
+
+
 def build_timing_info_block(issued_at: dt.datetime, timeout_seconds: int) -> str:
     """Build the optional timing metadata shown in dialogs."""
     answer_until = issued_at + dt.timedelta(seconds=timeout_seconds)
@@ -56,6 +89,50 @@ def build_timing_info_block(issued_at: dt.datetime, timeout_seconds: int) -> str
         f" | Answer until: {format_dialog_timestamp(answer_until)}"
         f" ({TIMING_INFO_TIMEOUT_NOTE})"
     )
+
+
+def build_dialog_telegram_notice(platform_name: str) -> str:
+    """Explain that the prompt was also delivered through Telegram."""
+    if platform_name == "Windows":
+        return (
+            "📨 Also sent to Telegram. ⚠️ If you reply there first, this dialog will stay "
+            "open. Any later answer here will be ignored."
+        )
+
+    return "📨 Also sent to Telegram."
+
+
+def build_prompt_text(
+    question: str,
+    context: str,
+    *,
+    timeout_seconds: int,
+    include_timing_info: bool,
+    extra_note: str = "",
+) -> str:
+    """Build the formatted prompt text for dialogs and Telegram messages."""
+    separator = "─" * 40
+    question_block = f"❓ Question:\n{question.strip()}"
+    if extra_note.strip():
+        question_block = f"{question_block}\n\n{extra_note.strip()}"
+
+    if context.strip():
+        full_question = f"📋 Context:\n{context.strip()}\n\n{separator}\n\n{question_block}"
+    else:
+        full_question = question_block
+
+    if include_timing_info:
+        return (
+            f"{full_question}\n\n{separator}\n\n"
+            f"{build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)}"
+        )
+
+    return full_question
+
+
+def build_telegram_prompt_text(prompt_text: str) -> str:
+    """Add a minimal Telegram-specific reply instruction to the prompt."""
+    return f"{prompt_text}\n\n↩️ Reply to this message with your answer."
 
 
 # Custom exception classes for better error handling (Task 1.4)
@@ -77,6 +154,176 @@ class UserPromptError(Exception):
     pass
 
 
+class TelegramPromptError(Exception):
+    """Error while sending a prompt or waiting for a Telegram reply."""
+
+    pass
+
+
+class TelegramPromptClient:
+    """Minimal long-polling Telegram client for prompt/response workflows."""
+
+    def __init__(self, config: TelegramConfig) -> None:
+        self.bot_token = config.bot_token
+        self.chat_id = config.chat_id
+        self._lock = asyncio.Lock()
+        self._next_update_offset: Optional[int] = None
+        self._pending_by_message_id: dict[int, asyncio.Future[str]] = {}
+        self._poller_task: Optional[asyncio.Task[None]] = None
+
+    async def ask_question(self, prompt_text: str, timeout: int) -> Optional[str]:
+        """Send a prompt message and wait for a reply to that specific message."""
+        message_id = await self._send_prompt(prompt_text)
+        response_future = asyncio.get_running_loop().create_future()
+
+        async with self._lock:
+            self._pending_by_message_id[message_id] = response_future
+            self._ensure_poller_locked()
+
+        try:
+            return await asyncio.wait_for(response_future, timeout)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            async with self._lock:
+                self._pending_by_message_id.pop(message_id, None)
+
+    async def _send_prompt(self, prompt_text: str) -> int:
+        """Send the outbound Telegram message and return its message id."""
+        result = await self._bot_api_request(
+            "sendMessage",
+            {
+                "chat_id": self.chat_id,
+                "text": build_telegram_prompt_text(prompt_text),
+            },
+            timeout=20,
+        )
+
+        message_id = result.get("message_id")
+        if not isinstance(message_id, int):
+            raise TelegramPromptError("Telegram sendMessage did not return a message_id.")
+
+        return message_id
+
+    def _ensure_poller_locked(self) -> None:
+        """Start the update poller while the lock is held."""
+        if self._poller_task is None or self._poller_task.done():
+            self._poller_task = asyncio.create_task(self._poll_updates())
+            self._poller_task.add_done_callback(self._consume_task_result)
+
+    async def _poll_updates(self) -> None:
+        """Long-poll Telegram updates and resolve pending prompt futures."""
+        try:
+            while True:
+                async with self._lock:
+                    if not self._pending_by_message_id:
+                        self._poller_task = None
+                        return
+
+                    offset = self._next_update_offset
+
+                updates = await self._bot_api_request(
+                    "getUpdates",
+                    {
+                        "offset": offset,
+                        "timeout": DEFAULT_TELEGRAM_POLL_TIMEOUT_SECONDS,
+                        "allowed_updates": ["message"],
+                    },
+                    timeout=DEFAULT_TELEGRAM_POLL_TIMEOUT_SECONDS + 10,
+                )
+
+                if not isinstance(updates, list):
+                    raise TelegramPromptError("Telegram getUpdates returned an unexpected payload.")
+
+                async with self._lock:
+                    for update in updates:
+                        update_id = update.get("update_id")
+                        if isinstance(update_id, int):
+                            self._next_update_offset = update_id + 1
+
+                        resolved = self._resolve_update_locked(update)
+                        if resolved is not None:
+                            message_id, response_text = resolved
+                            future = self._pending_by_message_id.get(message_id)
+                            if future is not None and not future.done():
+                                future.set_result(response_text)
+        except Exception as exc:
+            async with self._lock:
+                pending = list(self._pending_by_message_id.values())
+                self._pending_by_message_id.clear()
+                self._poller_task = None
+
+            for future in pending:
+                if not future.done():
+                    future.set_exception(TelegramPromptError(f"Telegram polling failed: {exc}"))
+
+    def _resolve_update_locked(self, update: dict[str, Any]) -> Optional[tuple[int, str]]:
+        """Extract a reply to a pending prompt message from a Telegram update."""
+        message = update.get("message")
+        if not isinstance(message, dict):
+            return None
+
+        chat = message.get("chat")
+        if not isinstance(chat, dict) or str(chat.get("id")) != self.chat_id:
+            return None
+
+        reply_to_message = message.get("reply_to_message")
+        if not isinstance(reply_to_message, dict):
+            return None
+
+        reply_message_id = reply_to_message.get("message_id")
+        if not isinstance(reply_message_id, int):
+            return None
+
+        if reply_message_id not in self._pending_by_message_id:
+            return None
+
+        response_text = message.get("text")
+        if not isinstance(response_text, str) or not response_text.strip():
+            return None
+
+        return reply_message_id, response_text.strip()
+
+    async def _bot_api_request(self, method: str, payload: dict[str, Any], *, timeout: int) -> Any:
+        """Issue a Telegram Bot API request through the standard library HTTP stack."""
+        return await asyncio.to_thread(self._bot_api_request_sync, method, payload, timeout)
+
+    def _bot_api_request_sync(self, method: str, payload: dict[str, Any], timeout: int) -> Any:
+        """Perform a blocking Telegram Bot API request."""
+        request_url = f"https://api.telegram.org/bot{self.bot_token}/{method}"
+        request_data = json.dumps(payload).encode("utf-8")
+        request_obj = urllib.request.Request(
+            request_url,
+            data=request_data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request_obj, timeout=timeout) as response:
+                payload_json = json.load(response)
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise TelegramPromptError(
+                f"Telegram {method} failed with HTTP {exc.code}: {error_body}"
+            ) from exc
+        except OSError as exc:
+            raise TelegramPromptError(f"Telegram {method} request failed: {exc}") from exc
+
+        if not isinstance(payload_json, dict) or not payload_json.get("ok"):
+            raise TelegramPromptError(
+                f"Telegram {method} failed: {payload_json.get('description', 'unknown error')}"
+            )
+
+        return payload_json.get("result")
+
+    @staticmethod
+    def _consume_task_result(task: asyncio.Task[None]) -> None:
+        """Avoid noisy unhandled task warnings for background pollers."""
+        with suppress(asyncio.CancelledError):
+            task.result()
+
+
 class GUIDialogHandler:
     """Cross-platform GUI dialog handler for asking humans for context.
 
@@ -90,7 +337,12 @@ class GUIDialogHandler:
         self.dialog_title = resolve_dialog_title(dialog_title)
 
     async def get_user_input(
-        self, question: str, timeout: int = DEFAULT_DIALOG_TIMEOUT_SECONDS
+        self,
+        question: str,
+        timeout: int = DEFAULT_DIALOG_TIMEOUT_SECONDS,
+        *,
+        cancel_event: Optional[asyncio.Event] = None,
+        run_in_thread: bool = False,
     ) -> Optional[str]:
         """Get user input via native GUI dialog with timeout.
 
@@ -107,11 +359,15 @@ class GUIDialogHandler:
         """
         try:
             if self.platform == "Darwin":
-                return await self._macos_dialog(question, timeout)
+                return await self._macos_dialog(question, timeout, cancel_event=cancel_event)
             elif self.platform == "Linux":
-                return await self._linux_dialog(question, timeout)
+                return await self._linux_dialog(question, timeout, cancel_event=cancel_event)
             else:
-                return await self._windows_dialog(question, timeout)
+                return await self._windows_dialog(
+                    question,
+                    timeout,
+                    run_in_thread=run_in_thread,
+                )
         except KeyboardInterrupt:
             # Handle Ctrl+C gracefully
             raise UserPromptCancelled("User interrupted the dialog with Ctrl+C")
@@ -120,6 +376,45 @@ class GUIDialogHandler:
             raise UserPromptError(
                 f"GUI dialog failed: {e}. Ensure osascript (macOS), zenity (Linux), or tkinter (Windows) is available."
             )
+
+    async def _communicate_or_cancel(
+        self,
+        process: asyncio.subprocess.Process,
+        cancel_event: Optional[asyncio.Event],
+    ) -> tuple[bytes, bytes, bool]:
+        """Wait for a dialog subprocess or cancel it if another channel wins."""
+        communicate_task = asyncio.create_task(process.communicate())
+        cancel_task: Optional[asyncio.Task[bool]] = None
+        if cancel_event is not None:
+            cancel_task = asyncio.create_task(cancel_event.wait())
+
+        tasks = {communicate_task}
+        if cancel_task is not None:
+            tasks.add(cancel_task)
+
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+        for pending_task in pending:
+            pending_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await pending_task
+
+        if cancel_task is not None and cancel_task in done and cancel_event is not None:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2)
+                except asyncio.TimeoutError:
+                    process.kill()
+                    await process.wait()
+
+            communicate_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await communicate_task
+            return b"", b"", True
+
+        stdout, stderr = await communicate_task
+        return stdout, stderr, False
 
     def _enable_windows_dpi_awareness(self) -> None:
         """Enable crisp rendering for Windows dialogs on scaled displays."""
@@ -159,7 +454,9 @@ class GUIDialogHandler:
         except Exception:
             pass
 
-    async def _macos_dialog(self, question: str, timeout: int) -> Optional[str]:
+    async def _macos_dialog(
+        self, question: str, timeout: int, *, cancel_event: Optional[asyncio.Event] = None
+    ) -> Optional[str]:
         """macOS dialog using osascript with custom Cursor icon."""
 
         # Use the custom Cursor icon from assets folder
@@ -195,7 +492,9 @@ class GUIDialogHandler:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            stdout, stderr = await process.communicate()
+            stdout, stderr, was_cancelled = await self._communicate_or_cancel(process, cancel_event)
+            if was_cancelled:
+                return None
 
             if process.returncode == 0:
                 output = stdout.decode().strip()
@@ -217,7 +516,9 @@ class GUIDialogHandler:
         except Exception as e:
             return None
 
-    async def _linux_dialog(self, question: str, timeout: int) -> Optional[str]:
+    async def _linux_dialog(
+        self, question: str, timeout: int, *, cancel_event: Optional[asyncio.Event] = None
+    ) -> Optional[str]:
         """Linux dialog using zenity with custom Cursor logo."""
         # Use the custom Cursor logo for consistent branding
         icon_args = self._get_linux_icon_args()
@@ -235,7 +536,9 @@ class GUIDialogHandler:
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
 
-            stdout, stderr = await process.communicate()
+            stdout, stderr, was_cancelled = await self._communicate_or_cancel(process, cancel_event)
+            if was_cancelled:
+                return None
 
             if process.returncode == 0:
                 return stdout.decode().strip()
@@ -243,8 +546,21 @@ class GUIDialogHandler:
         except Exception:
             return None
 
-    async def _windows_dialog(self, question: str, timeout: int) -> Optional[str]:
+    async def _windows_dialog(
+        self,
+        question: str,
+        timeout: int,
+        *,
+        run_in_thread: bool = False,
+    ) -> Optional[str]:
         """Windows dialog using tkinter with custom Cursor logo."""
+        if run_in_thread:
+            return await asyncio.to_thread(self._windows_dialog_sync, question, timeout)
+
+        return self._windows_dialog_sync(question, timeout)
+
+    def _windows_dialog_sync(self, question: str, timeout: int) -> Optional[str]:
+        """Blocking Windows dialog implementation for the current Tk/simpledialog UI."""
         root = None
         try:
             import tkinter as tk
@@ -378,6 +694,114 @@ class GUIDialogHandler:
 dialog_handler = GUIDialogHandler()
 dialog_timeout_seconds = DEFAULT_DIALOG_TIMEOUT_SECONDS
 show_timing_info = False
+response_channel = DEFAULT_RESPONSE_CHANNEL
+telegram_client: Optional[TelegramPromptClient] = None
+
+
+def _consume_detached_task_result(task: asyncio.Task[Any]) -> None:
+    """Suppress result warnings for intentionally detached background tasks."""
+    with suppress(asyncio.CancelledError, Exception):
+        task.result()
+
+
+async def _get_first_channel_response(
+    dialog_prompt: str,
+    telegram_prompt: str,
+    timeout_seconds: int,
+) -> Optional[str]:
+    """Race dialog and Telegram, returning the first successful response."""
+    if telegram_client is None:
+        raise UserPromptError(
+            "Telegram response channel is enabled, but no Telegram target was configured."
+        )
+
+    should_thread_windows_dialog = dialog_handler.platform == "Windows"
+    cancel_event = None if should_thread_windows_dialog else asyncio.Event()
+
+    dialog_task = asyncio.create_task(
+        dialog_handler.get_user_input(
+            dialog_prompt,
+            timeout_seconds,
+            cancel_event=cancel_event,
+            run_in_thread=should_thread_windows_dialog,
+        )
+    )
+    telegram_task = asyncio.create_task(
+        telegram_client.ask_question(telegram_prompt, timeout_seconds)
+    )
+
+    pending_tasks: dict[asyncio.Task[Optional[str]], str] = {
+        dialog_task: "dialog",
+        telegram_task: "telegram",
+    }
+    first_error: Optional[UserPromptError] = None
+
+    while pending_tasks:
+        done, _ = await asyncio.wait(pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED)
+
+        for task in done:
+            channel_name = pending_tasks.pop(task)
+            try:
+                result = await task
+            except TelegramPromptError as exc:
+                if first_error is None:
+                    first_error = UserPromptError(f"Telegram prompt failed: {exc}")
+                continue
+            except UserPromptError as exc:
+                if first_error is None:
+                    first_error = exc
+                continue
+            except asyncio.CancelledError:
+                continue
+
+            if result is None:
+                continue
+
+            if channel_name == "telegram":
+                if cancel_event is not None:
+                    cancel_event.set()
+                    with suppress(asyncio.TimeoutError, UserPromptError):
+                        await asyncio.wait_for(dialog_task, timeout=3)
+                else:
+                    dialog_task.add_done_callback(_consume_detached_task_result)
+            else:
+                telegram_task.cancel()
+                with suppress(asyncio.CancelledError, TelegramPromptError):
+                    await telegram_task
+
+            return result
+
+    if first_error is not None:
+        raise first_error
+
+    return None
+
+
+async def get_user_input_from_configured_channel(
+    dialog_prompt: str,
+    telegram_prompt: str,
+    timeout_seconds: int,
+) -> Optional[str]:
+    """Use the currently configured response channel(s) to collect user input."""
+    if response_channel == "dialog":
+        return await dialog_handler.get_user_input(dialog_prompt, timeout_seconds)
+
+    if telegram_client is None:
+        raise UserPromptError(
+            "Telegram response channel is enabled, but no Telegram target was configured."
+        )
+
+    if response_channel == "telegram":
+        try:
+            return await telegram_client.ask_question(telegram_prompt, timeout_seconds)
+        except TelegramPromptError as exc:
+            raise UserPromptError(f"Telegram prompt failed: {exc}") from exc
+
+    return await _get_first_channel_response(
+        dialog_prompt,
+        telegram_prompt,
+        timeout_seconds,
+    )
 
 
 @mcp.tool()
@@ -432,31 +856,30 @@ async def asking_user_missing_context(question: str, context: str = "") -> str:
         return "❌ Error: 'context' is too long (max 2000 characters). Please provide a more concise context."
 
     try:
-        separator = "─" * 40
-        # Format question with context for better user experience
-        if show_timing_info and context.strip():
-            full_question = (
-                f"📋 Context:\n{context.strip()}\n\n"
-                f"{separator}\n\n"
-                f"❓ Question:\n{question.strip()}\n\n"
-                f"{separator}\n\n"
-                f"{build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)}"
-            )
-        elif show_timing_info:
-            full_question = (
-                f"❓ Question:\n{question.strip()}\n\n"
-                f"{separator}\n\n"
-                f"{build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)}"
-            )
-        elif context.strip():
-            # Format context clearly with visual separation
-            formatted_context = f"📋 Context:\n{context.strip()}\n"
-            full_question = f"{formatted_context}\n{separator}\n\n❓ Question:\n{question.strip()}"
-        else:
-            full_question = f"❓ Question:\n{question.strip()}"
+        telegram_notice = ""
+        if response_channel == "both":
+            telegram_notice = build_dialog_telegram_notice(dialog_handler.platform)
 
-        # Get user input via GUI dialog with timeout
-        response = await dialog_handler.get_user_input(full_question, timeout_seconds)
+        dialog_prompt = build_prompt_text(
+            question,
+            context,
+            timeout_seconds=timeout_seconds,
+            include_timing_info=show_timing_info,
+            extra_note=telegram_notice,
+        )
+        telegram_prompt = build_prompt_text(
+            question,
+            context,
+            timeout_seconds=timeout_seconds,
+            include_timing_info=show_timing_info,
+        )
+
+        # Get user input via the configured channel(s)
+        response = await get_user_input_from_configured_channel(
+            dialog_prompt,
+            telegram_prompt,
+            timeout_seconds,
+        )
 
         # Handle different response scenarios with custom exceptions
         if response is None:
@@ -588,19 +1011,44 @@ def main() -> None:
         "--show-timing-info",
         action="store_true",
         help=(
-            "Add Issued at / Answer until lines to dialog text. Actual wait may still "
-            "be shorter if the MCP client or agent has a lower timeout."
+            "Add Issued at / Answer until lines to dialog text. The MCP client may time "
+            "out sooner than the dialog itself."
+        ),
+    )
+    parser.add_argument(
+        "--response-channel",
+        choices=["dialog", "telegram", "both"],
+        default=DEFAULT_RESPONSE_CHANNEL,
+        help="Where to collect the reply: dialog, telegram, or both.",
+    )
+    parser.add_argument(
+        "--telegram",
+        default=None,
+        help=(
+            "Telegram bot target as a single argument: '<bot_token> <chat_id>'. "
+            "Required for --response-channel telegram or both."
         ),
     )
     args = parser.parse_args()
+    try:
+        telegram_target = parse_telegram_target(args.telegram)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if args.response_channel != "dialog" and telegram_target is None:
+        parser.error("--telegram is required when --response-channel is telegram or both.")
 
     global dialog_handler
     global dialog_timeout_seconds
     initialize_time_locale()
     global show_timing_info
+    global response_channel
+    global telegram_client
     dialog_handler = GUIDialogHandler(dialog_title=args.dialog_title)
     dialog_timeout_seconds = args.timeout_seconds
     show_timing_info = args.show_timing_info
+    response_channel = args.response_channel
+    telegram_client = TelegramPromptClient(telegram_target) if telegram_target is not None else None
 
     # Launch the server with the selected transport mode
     if args.transport == "stdio":
