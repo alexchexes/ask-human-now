@@ -17,7 +17,7 @@ mcp = FastMCP("ask-human-for-context")
 
 DEFAULT_DIALOG_TIMEOUT_SECONDS = 120
 DEFAULT_DIALOG_TITLE = "🤖 Cursor AI Assistant"
-TIMING_INFO_TIMEOUT_NOTE = "actual wait may be shorter"
+TIMING_INFO_TIMEOUT_NOTE = "client may time out sooner"
 
 
 def resolve_dialog_title(dialog_title: Optional[str] = None) -> str:
