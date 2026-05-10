@@ -227,6 +227,17 @@ ask-human-for-context-mcp --transport sse --host 0.0.0.0 --port 8080
 - **Configurable range**: 30 seconds to 2 hours
 - **User-friendly**: Shows timeout in minutes for better UX
 
+### Dialog Timing Metadata
+
+Use `--show-timing-info` to include `Issued at` and `Answer until` lines in the dialog text:
+
+```bash
+ask-human-for-context-mcp --transport stdio --show-timing-info
+```
+
+When enabled, dialogs also show a note that the actual wait can still be shorter if the
+MCP client or agent applies a lower timeout.
+
 ## 🔍 Tool Reference
 
 ### `asking_user_missing_context`

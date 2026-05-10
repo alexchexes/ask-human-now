@@ -1,38 +1,71 @@
 import asyncio
-import subprocess
+import datetime as dt
 import platform
+import subprocess
 from typing import Any, Optional
+
+import uvicorn
+from mcp.server import Server
 from mcp.server.fastmcp import FastMCP
-from starlette.applications import Starlette
 from mcp.server.sse import SseServerTransport
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
-from mcp.server import Server
-import uvicorn
 
 # Initialize FastMCP server for User Prompt tools
 mcp = FastMCP("ask-human-for-context")
+
+DEFAULT_DIALOG_TIMEOUT_SECONDS = 90
+TIMING_INFO_TIMEOUT_NOTE = (
+    "Note: Actual wait may be shorter if your MCP client, agent, or other tooling "
+    "enforces a lower timeout."
+)
+
+
+def format_dialog_timestamp(moment: dt.datetime) -> str:
+    """Format dialog timestamps with a locale-aware representation when available."""
+    try:
+        formatted = moment.astimezone().strftime("%c").strip()
+        if formatted:
+            return formatted
+    except Exception:
+        pass
+
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def build_timing_info_block(issued_at: dt.datetime, timeout_seconds: int) -> str:
+    """Build the optional timing metadata shown in dialogs."""
+    answer_until = issued_at + dt.timedelta(seconds=timeout_seconds)
+    return (
+        f"Issued at: {format_dialog_timestamp(issued_at)}\n"
+        f"Answer until: {format_dialog_timestamp(answer_until)}\n"
+        f"{TIMING_INFO_TIMEOUT_NOTE}"
+    )
 
 
 # Custom exception classes for better error handling (Task 1.4)
 class UserPromptTimeout(Exception):
     """Raised when user doesn't respond within timeout period."""
+
     pass
 
 
 class UserPromptCancelled(Exception):
     """Raised when user cancels the prompt or interrupts the process."""
+
     pass
 
 
 class UserPromptError(Exception):
     """Generic error for user prompt operations."""
+
     pass
 
 
 class GUIDialogHandler:
     """Cross-platform GUI dialog handler for asking humans for context.
-    
+
     Provides native GUI dialogs on macOS (osascript), Linux (zenity), and Windows (tkinter).
     Falls back to terminal input if GUI is unavailable.
     """
@@ -41,16 +74,18 @@ class GUIDialogHandler:
         """Initialize the dialog handler with platform detection."""
         self.platform = platform.system()
 
-    async def get_user_input(self, question: str, timeout: int = 1200) -> Optional[str]:
+    async def get_user_input(
+        self, question: str, timeout: int = DEFAULT_DIALOG_TIMEOUT_SECONDS
+    ) -> Optional[str]:
         """Get user input via native GUI dialog with timeout.
-        
+
         Args:
             question: The question to ask the user
-            timeout: Timeout in seconds (default: 1200 = 20 minutes)
-            
+            timeout: Timeout in seconds
+
         Returns:
             The user's response as a string, or None if timeout/cancelled
-            
+
         Raises:
             UserPromptError: If GUI dialog system fails
             UserPromptCancelled: If user cancels or interrupts
@@ -67,36 +102,44 @@ class GUIDialogHandler:
             raise UserPromptCancelled("User interrupted the dialog with Ctrl+C")
         except Exception as e:
             # Don't fall back to terminal in MCP context - just report the error
-            raise UserPromptError(f"GUI dialog failed: {e}. Ensure osascript (macOS), zenity (Linux), or tkinter (Windows) is available.")
+            raise UserPromptError(
+                f"GUI dialog failed: {e}. Ensure osascript (macOS), zenity (Linux), or tkinter (Windows) is available."
+            )
 
     async def _macos_dialog(self, question: str, timeout: int) -> Optional[str]:
         """macOS dialog using osascript with custom Cursor icon."""
-        
+
         # Use the custom Cursor icon from assets folder
         import os
-        
+
         # Use absolute path to the icon file - more reliable than path calculation
-        cursor_icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "cursor-icon.icns")
-        
+        cursor_icon_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "assets",
+            "cursor-icon.icns",
+        )
+
         if os.path.exists(cursor_icon_path):
             icon_clause = f'with icon file (POSIX file "{cursor_icon_path}")'
         else:
             # Fallback to caution icon if custom icon not found
             icon_clause = "with icon caution"
-        
-        script = f'''
+
+        script = f"""
         display dialog "{self._escape_for_applescript(question)}" ¬
         default answer "" ¬
         with title "🤖 Cursor AI Assistant" ¬
         {icon_clause} ¬
         giving up after {timeout}
-        '''
+        """
 
         try:
             process = await asyncio.create_subprocess_exec(
-                "osascript", "-e", script,
+                "osascript",
+                "-e",
+                script,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
 
             stdout, stderr = await process.communicate()
@@ -125,9 +168,10 @@ class GUIDialogHandler:
         """Linux dialog using zenity with custom Cursor logo."""
         # Use the custom Cursor logo for consistent branding
         icon_args = self._get_linux_icon_args()
-        
+
         cmd = [
-            "zenity", "--entry",
+            "zenity",
+            "--entry",
             "--title=🤖 Cursor AI Assistant",
             f"--text={question}",
             f"--timeout={timeout}",
@@ -135,9 +179,7 @@ class GUIDialogHandler:
 
         try:
             process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
 
             stdout, stderr = await process.communicate()
@@ -151,86 +193,90 @@ class GUIDialogHandler:
     async def _windows_dialog(self, question: str, timeout: int) -> Optional[str]:
         """Windows dialog using tkinter with custom Cursor logo."""
         try:
+            import os
             import tkinter as tk
             from tkinter import simpledialog
-            import os
-            
+
             # Create a simple dialog using tkinter
             root = tk.Tk()
             root.withdraw()  # Hide the main window
-            
+
             # Try to set custom icon from PNG (converted to ICO)
             self._set_windows_icon(root)
-            
+
             result = simpledialog.askstring("🤖 Cursor AI Assistant", question)
             root.destroy()
-            
+
             return result
         except Exception:
             return None
 
     def _escape_for_applescript(self, text: str) -> str:
         """Escape text for AppleScript."""
-        return text.replace('"', '\\"').replace('\\', '\\\\')
+        return text.replace('"', '\\"').replace("\\", "\\\\")
 
     def _get_macos_icon_clause(self) -> str:
         """Get the icon clause for macOS dialog with custom Cursor logo."""
         import os
-        
+
         # Check for the specific Cursor Logo files (prioritize ICNS for macOS)
         custom_logo_paths = [
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "cursor-icon.icns"),  # Try ICNS first (native macOS format)
+            os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "assets",
+                "cursor-icon.icns",
+            ),  # Try ICNS first (native macOS format)
             "./cursor-icon.icns",
             "./assets/Cursor Logo (4).png",
-            "./Cursor Logo (4).png"
+            "./Cursor Logo (4).png",
         ]
-        
+
         for icon_path in custom_logo_paths:
             if os.path.exists(icon_path):
-                if icon_path.endswith('.icns'):
+                if icon_path.endswith(".icns"):
                     print(f"✅ Found ICNS icon: {icon_path}")
                     abs_path = os.path.abspath(icon_path)
                     return f'with icon file (POSIX file "{abs_path}")'
-                elif icon_path.endswith('.png'):
+                elif icon_path.endswith(".png"):
                     print(f"✅ Found custom Cursor logo: {icon_path}")
                     print("ℹ️ Note: Using application icon style for PNG logo")
                     # Use 'application' icon for software/AI assistant feel
                     return "with icon application"
-        
+
         # Fall back to application icon (better for AI assistant than default)
         return "with icon application"
 
     def _get_linux_icon_args(self) -> list:
         """Get icon arguments for Linux zenity dialog with custom Cursor logo."""
         import os
-        
+
         # Check for the specific Cursor Logo (4).png file first
         custom_logo_paths = [
             "./assets/Cursor Logo (4).png",
             "./Cursor Logo (4).png",
             "./assets/cursor-icon.png",
-            "./cursor-icon.png"
+            "./cursor-icon.png",
         ]
-        
+
         for icon_path in custom_logo_paths:
             if os.path.exists(icon_path):
                 print(f"✅ Using custom Cursor logo for Linux: {icon_path}")
                 return [f"--window-icon={icon_path}"]
-        
+
         # Fall back to built-in question icon
         return ["--question"]
 
     def _set_windows_icon(self, root) -> None:
         """Set icon for Windows tkinter dialog with custom Cursor logo."""
         import os
-        
+
         # Check for custom Cursor icon files
         possible_icon_paths = [
             "./assets/cursor-icon.ico",
             "./cursor-icon.ico",
-            "C:\\Program Files\\Cursor\\cursor.ico"
+            "C:\\Program Files\\Cursor\\cursor.ico",
         ]
-        
+
         for icon_path in possible_icon_paths:
             if os.path.exists(icon_path):
                 try:
@@ -239,7 +285,7 @@ class GUIDialogHandler:
                     return
                 except Exception:
                     continue
-        
+
         # Note: PNG files can't be directly used as Windows icons
         # Users would need to convert "Cursor Logo (4).png" to ICO format
         if os.path.exists("./assets/Cursor Logo (4).png"):
@@ -248,61 +294,61 @@ class GUIDialogHandler:
 
 # Global dialog handler instance
 dialog_handler = GUIDialogHandler()
+show_timing_info = False
 
 
 @mcp.tool()
-async def asking_user_missing_context(
-    question: str,
-    context: str = ""
-) -> str:
+async def asking_user_missing_context(question: str, context: str = "") -> str:
     """Ask the user to fill missing context or knowledge gaps during research and development.
-    
+
     This tool enables AI assistants to pause workflows when they encounter missing context,
-    need clarification on implementation choices, or require understanding of preferred 
+    need clarification on implementation choices, or require understanding of preferred
     approaches. Use this when conducting research and you need user input to proceed effectively.
-    
+
     Common use cases:
     - Multiple valid implementation approaches exist (ask user for preference)
     - Need clarification on preferred tech stack or framework
-    - Missing domain-specific requirements or constraints  
+    - Missing domain-specific requirements or constraints
     - Uncertain about user's specific goals or priorities
     - Need to understand existing codebase patterns or conventions
-    
+
     Args:
         question: The specific question about missing context (max 1000 characters)
         context: Background info explaining why this context is needed (max 2000 characters)
-        
+
     Returns:
         The user's response as a formatted string with status indicator
-        
+
     Raises:
         ValueError: If parameters are invalid or out of acceptable ranges
     """
 
-    timeout_seconds = 90 # 1.5 minutes
-    
+    timeout_seconds = DEFAULT_DIALOG_TIMEOUT_SECONDS
+
     # Parameter validation with clear error messages
     if not question or not isinstance(question, str):
         return "❌ Error: 'question' parameter is required and must be a non-empty string"
-    
+
     if len(question.strip()) == 0:
         return "❌ Error: 'question' cannot be empty or only whitespace"
-    
+
     if len(question) > 1000:
-        return "❌ Error: 'question' is too long (max 1000 characters). Please shorten your question."
-    
+        return (
+            "❌ Error: 'question' is too long (max 1000 characters). Please shorten your question."
+        )
+
     if not isinstance(timeout_seconds, int):
         return "❌ Error: 'timeout_seconds' must be an integer"
-    
+
     if timeout_seconds < 30:
         return "❌ Error: 'timeout_seconds' must be at least 30 seconds for usability"
-    
+
     if timeout_seconds > 7200:  # 2 hours max
         return "❌ Error: 'timeout_seconds' cannot exceed 7200 seconds (2 hours) to prevent indefinite hanging"
-    
+
     if not isinstance(context, str):
         return "❌ Error: 'context' must be a string (use empty string if no context needed)"
-    
+
     if len(context) > 2000:
         return "❌ Error: 'context' is too long (max 2000 characters). Please provide a more concise context."
 
@@ -315,6 +361,13 @@ async def asking_user_missing_context(
             full_question = f"{formatted_context}\n{separator}\n\n❓ Question:\n{question.strip()}"
         else:
             full_question = f"❓ {question.strip()}"
+
+        if show_timing_info:
+            timing_info = build_timing_info_block(dt.datetime.now().astimezone(), timeout_seconds)
+            if context.strip():
+                full_question = f"{full_question}\n\n{timing_info}"
+            else:
+                full_question = f"❓ Question:\n{question.strip()}\n\n{timing_info}"
 
         # Get user input via GUI dialog with timeout
         response = await dialog_handler.get_user_input(full_question, timeout_seconds)
@@ -332,26 +385,26 @@ async def asking_user_missing_context(
 
         # Successful response
         clean_response = response.strip()
-        
+
         # Format response with clear indicator
         return f"✅ User response: {clean_response}"
 
     except UserPromptTimeout as e:
         # Handle timeout with user-friendly message
         return f"⚠️ Timeout: {str(e)}. The dialog may have timed out or been cancelled. Please try asking again if needed."
-    
+
     except UserPromptCancelled as e:
-        # Handle cancellation 
+        # Handle cancellation
         return f"⚠️ Cancelled: {str(e)}. The user cancelled the prompt. Please try again or rephrase your question."
-    
+
     except KeyboardInterrupt:
         # Handle Ctrl+C gracefully without crashing the server
         raise UserPromptCancelled("User interrupted the prompt with Ctrl+C")
-    
+
     except UserPromptError as e:
         # Handle custom user prompt errors
         return f"❌ User Prompt Error: {str(e)}"
-    
+
     except Exception as e:
         # Comprehensive error handling with helpful context
         error_context = f"Question: {question[:100]}{'...' if len(question) > 100 else ''}"
@@ -360,14 +413,14 @@ async def asking_user_missing_context(
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
     """Create a Starlette application that can serve the provided MCP server with SSE.
-    
+
     Sets up a Starlette web application with routes for SSE (Server-Sent Events)
     communication with the MCP server.
-    
+
     Args:
         mcp_server: The MCP server instance to connect
         debug: Whether to enable debug mode for the Starlette app
-        
+
     Returns:
         A configured Starlette application
     """
@@ -376,17 +429,17 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
 
     async def handle_sse(request: Request) -> None:
         """Handler for SSE connections.
-        
+
         Establishes an SSE connection and connects it to the MCP server.
-        
+
         Args:
             request: The incoming HTTP request
         """
         # Connect the SSE transport to the request
         async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,  # noqa: SLF001
+            request.scope,
+            request.receive,
+            request._send,  # noqa: SLF001
         ) as (read_stream, write_stream):
             # Run the MCP server with the SSE streams
             await mcp_server.run(
@@ -407,33 +460,48 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
 
 def main():
     """Main entry point for the User Prompt MCP server.
-    
+
     This function serves as the primary entry point when the server is launched
     via uvx or direct Python execution. It handles argument parsing and server startup.
     """
     # Get the underlying MCP server from the FastMCP instance
     mcp_server = mcp._mcp_server  # noqa: WPS437
-    
+
     import argparse
-    
+
     # Set up command-line argument parsing
-    parser = argparse.ArgumentParser(description='Run User Prompt MCP server with configurable transport')
+    parser = argparse.ArgumentParser(
+        description="Run User Prompt MCP server with configurable transport"
+    )
     # Allow choosing between stdio and SSE transport modes
-    parser.add_argument('--transport', choices=['stdio', 'sse'], default='stdio', 
-                        help='Transport mode (stdio or sse)')
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default="stdio",
+        help="Transport mode (stdio or sse)",
+    )
     # Host configuration for SSE mode
-    parser.add_argument('--host', default='0.0.0.0', 
-                        help='Host to bind to (for SSE mode)')
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to (for SSE mode)")
     # Port configuration for SSE mode
-    parser.add_argument('--port', type=int, default=8080, 
-                        help='Port to listen on (for SSE mode)')
+    parser.add_argument("--port", type=int, default=8080, help="Port to listen on (for SSE mode)")
+    parser.add_argument(
+        "--show-timing-info",
+        action="store_true",
+        help=(
+            "Add Issued at / Answer until lines to dialog text. Actual wait may still "
+            "be shorter if the MCP client or agent has a lower timeout."
+        ),
+    )
     args = parser.parse_args()
 
+    global show_timing_info
+    show_timing_info = args.show_timing_info
+
     # Launch the server with the selected transport mode
-    if args.transport == 'stdio':
+    if args.transport == "stdio":
         # Run with stdio transport (default)
         # This mode communicates through standard input/output
-        mcp.run(transport='stdio')
+        mcp.run(transport="stdio")
     else:
         # Run with SSE transport (web-based)
         # Create a Starlette app to serve the MCP server
