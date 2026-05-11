@@ -12,6 +12,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
 
+from .broker_state import resolve_broker_state_dir
 from .dialogs import (
     DEFAULT_DIALOG_TIMEOUT_SECONDS,
     GUIDialogHandler,
@@ -29,6 +30,7 @@ from .prompt_formatting import (
     initialize_time_locale,
     resolve_dialog_title,
 )
+from .telegram_broker import run_telegram_broker
 from .telegram_client import TelegramPromptClient
 from .telegram_models import (
     TelegramConfig,
@@ -413,7 +415,54 @@ def main() -> None:
             "under the system temp directory. Supports ~, environment variables, and {cwd}."
         ),
     )
+    parser.add_argument(
+        "--telegram-broker",
+        action="store_true",
+        help="Run the local Telegram broker service instead of the MCP server.",
+    )
+    parser.add_argument(
+        "--telegram-broker-label",
+        default=None,
+        help="Optional human-friendly label for the Telegram broker instance.",
+    )
+    parser.add_argument(
+        "--telegram-broker-state-dir",
+        default=None,
+        help=(
+            "Optional persistent state directory for the Telegram broker. Defaults to a "
+            "platform-specific per-user state location. Supports ~, environment variables, "
+            "and {cwd}."
+        ),
+    )
+    parser.add_argument(
+        "--telegram-broker-host",
+        default="127.0.0.1",
+        help="Host to bind to when running in --telegram-broker mode.",
+    )
+    parser.add_argument(
+        "--telegram-broker-port",
+        type=int,
+        default=0,
+        help=(
+            "Port to bind to when running in --telegram-broker mode. Defaults to 0 so the OS "
+            "assigns a free port."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.telegram_broker:
+        if args.telegram_broker_port < 0 or args.telegram_broker_port > 65535:
+            parser.error("--telegram-broker-port must be between 0 and 65535.")
+
+        broker_state_dir = resolve_broker_state_dir(args.telegram_broker_state_dir)
+        run_telegram_broker(
+            host=args.telegram_broker_host,
+            port=args.telegram_broker_port,
+            state_dir=broker_state_dir,
+            broker_label=args.telegram_broker_label,
+        )
+        return
+
     try:
         telegram_target = parse_telegram_target(args.telegram)
     except ValueError as exc:
