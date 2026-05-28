@@ -1,1 +1,1 @@
-"""Tests for ask-human-for-context-mcp package."""
+"""Tests for ask-human-now package."""

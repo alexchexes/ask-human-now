@@ -9,3 +9,4 @@ scratchpad/
 # Virtual environments
 .venv
 .history/
+/tmp
