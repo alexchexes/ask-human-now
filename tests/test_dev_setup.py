@@ -52,7 +52,15 @@ def test_dev_setup_tooling_is_consistent():
     extra_dev = _extract_dev_entries(pyproject_text, "[project.optional-dependencies]")
     group_dev = _extract_dev_entries(pyproject_text, "[dependency-groups]")
 
-    assert _package_names(extra_dev) == {"pytest", "black", "isort", "mypy", "pyright"}
+    assert _package_names(extra_dev) == {
+        "black",
+        "build",
+        "isort",
+        "mypy",
+        "pyright",
+        "pytest",
+        "twine",
+    }
     assert _package_names(group_dev) == _package_names(extra_dev)
 
 

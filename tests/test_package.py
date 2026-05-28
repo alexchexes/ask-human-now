@@ -9,13 +9,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 def test_package_import():
     """Test that the package can be imported successfully."""
-    import ask_human_for_context_mcp
+    import ask_human_now
 
-    assert ask_human_for_context_mcp is not None
+    assert ask_human_now is not None
 
 
 def test_package_version():
     """Test that the package version is correct."""
-    import ask_human_for_context_mcp
+    import ask_human_now
 
-    assert ask_human_for_context_mcp.__version__ == "1.0.3"
+    assert ask_human_now.__version__ == "0.1.0"

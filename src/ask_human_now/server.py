@@ -34,8 +34,8 @@ from .telegram_models import (
     resolve_telegram_download_dir,
 )
 
-# Initialize FastMCP server for User Prompt tools
-mcp = FastMCP("ask-human-for-context")
+# Initialize FastMCP server for human input tools.
+mcp = FastMCP("ask-human")
 
 DEFAULT_RESPONSE_CHANNEL = "dialog"
 
@@ -365,9 +365,7 @@ def main() -> None:
     import argparse
 
     # Set up command-line argument parsing
-    parser = argparse.ArgumentParser(
-        description="Run User Prompt MCP server with configurable transport"
-    )
+    parser = argparse.ArgumentParser(description="Run Ask Human MCP server")
     # Allow choosing between stdio and SSE transport modes
     parser.add_argument(
         "--transport",

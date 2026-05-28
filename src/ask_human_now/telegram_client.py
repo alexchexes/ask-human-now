@@ -27,7 +27,7 @@ from .telegram_models import (
 class TelegramPromptClient:
     """Minimal long-polling Telegram client for prompt/response workflows."""
 
-    ISSUE_URL = "https://github.com/galperetz/ask-human-for-context-mcp/issues"
+    ISSUE_URL = "https://github.com/alexchexes/ask-human-now/issues"
     NON_REPLY_HINT_TEXT = "⚠️ Message is ignored. Please use Reply on the bot's message."
     STALE_REPLY_HINT_TEMPLATE = (
         "⚠️ Message is ignored. {prompt_target} is no longer active. Ask the agent to send "

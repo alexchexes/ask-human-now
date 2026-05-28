@@ -5,14 +5,14 @@ import datetime as dt
 
 import pytest
 
-from ask_human_for_context_mcp import server
-from ask_human_for_context_mcp.broker_state import TelegramBrokerIdentity
-from ask_human_for_context_mcp.prompt_formatting import (
+from ask_human_now import server
+from ask_human_now.broker_state import TelegramBrokerIdentity
+from ask_human_now.prompt_formatting import (
     build_dialog_telegram_notice,
     build_telegram_prompt_text,
 )
-from ask_human_for_context_mcp.telegram_client import TelegramPromptClient
-from ask_human_for_context_mcp.telegram_models import (
+from ask_human_now.telegram_client import TelegramPromptClient
+from ask_human_now.telegram_models import (
     DEFAULT_TELEGRAM_POLL_TIMEOUT_SECONDS,
     TelegramConfig,
     parse_telegram_target,

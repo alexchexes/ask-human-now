@@ -5,7 +5,7 @@ import sys
 import types
 from typing import Any, cast
 
-from ask_human_for_context_mcp.server import GUIDialogHandler
+from ask_human_now.server import GUIDialogHandler
 
 
 def test_enable_windows_dpi_awareness_prefers_shcore(monkeypatch):
@@ -110,7 +110,7 @@ def test_windows_dialog_applies_dpi_setup(monkeypatch):
         "withdraw",
         ("icon", fake_root),
         ("after", 10000, fake_root.destroy),
-        ("askstring", "🤖 Cursor AI Assistant", "Question?", fake_root),
+        ("askstring", "Agent asks...", "Question?", fake_root),
         ("after-cancel", "timeout-id"),
         "destroy",
     ]

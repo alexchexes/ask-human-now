@@ -3,20 +3,20 @@
 import asyncio
 import sys
 
-from ask_human_for_context_mcp import server
-from ask_human_for_context_mcp.broker_state import (
+from ask_human_now import server
+from ask_human_now.broker_state import (
     load_broker_state,
     load_or_create_broker_identity,
     persist_broker_listen_url,
     resolve_broker_state_dir,
     resolve_target_broker_state_dir,
 )
-from ask_human_for_context_mcp.telegram_broker import (
+from ask_human_now.telegram_broker import (
     build_broker_health_payload,
     build_broker_listen_url,
     run_telegram_broker,
 )
-from ask_human_for_context_mcp.telegram_models import TelegramConfig, resolve_telegram_target_key
+from ask_human_now.telegram_models import TelegramConfig, resolve_telegram_target_key
 
 
 def test_broker_identity_is_stable_for_one_state_dir(tmp_path):
@@ -89,7 +89,7 @@ def test_main_runs_telegram_broker_mode(monkeypatch, tmp_path):
         sys,
         "argv",
         [
-            "ask-human-for-context-mcp",
+            "ask-human",
             "--telegram-broker",
             "--telegram",
             "123456:ABCDEF -1009876543210",
@@ -155,25 +155,25 @@ def test_run_telegram_broker_exits_cleanly_on_keyboard_interrupt(monkeypatch, tm
             assert sockets == [fake_socket]
 
     monkeypatch.setattr(
-        "ask_human_for_context_mcp.telegram_broker.load_or_create_broker_identity",
+        "ask_human_now.telegram_broker.load_or_create_broker_identity",
         lambda state_dir, broker_label=None: load_or_create_broker_identity(
             state_dir, broker_label=broker_label
         ),
     )
     monkeypatch.setattr(
-        "ask_human_for_context_mcp.telegram_broker._create_bound_socket",
+        "ask_human_now.telegram_broker._create_bound_socket",
         lambda host, port: fake_socket,
     )
     monkeypatch.setattr(
-        "ask_human_for_context_mcp.telegram_broker.persist_broker_listen_url",
+        "ask_human_now.telegram_broker.persist_broker_listen_url",
         lambda state_dir, listen_url: None,
     )
     monkeypatch.setattr(
-        "ask_human_for_context_mcp.telegram_broker.create_telegram_broker_app",
+        "ask_human_now.telegram_broker.create_telegram_broker_app",
         lambda identity, *, listen_url, telegram_client, target_key: object(),
     )
     monkeypatch.setattr(
-        "ask_human_for_context_mcp.telegram_broker.uvicorn.Config",
+        "ask_human_now.telegram_broker.uvicorn.Config",
         lambda app, host, port, log_level: {
             "app": app,
             "host": host,
@@ -182,7 +182,7 @@ def test_run_telegram_broker_exits_cleanly_on_keyboard_interrupt(monkeypatch, tm
         },
     )
     monkeypatch.setattr(
-        "ask_human_for_context_mcp.telegram_broker.uvicorn.Server",
+        "ask_human_now.telegram_broker.uvicorn.Server",
         FakeServer,
     )
     monkeypatch.setattr(

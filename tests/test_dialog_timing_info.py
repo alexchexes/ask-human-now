@@ -5,7 +5,7 @@ import datetime as dt
 import sys
 from typing import cast
 
-from ask_human_for_context_mcp import prompt_formatting, server
+from ask_human_now import prompt_formatting, server
 
 
 class StubDialogHandler:
@@ -87,7 +87,7 @@ def test_main_initializes_time_locale_before_running(monkeypatch):
     """Initialize locale once during startup before serving requests."""
     events = []
 
-    monkeypatch.setattr(sys, "argv", ["ask-human-for-context-mcp", "--transport", "stdio"])
+    monkeypatch.setattr(sys, "argv", ["ask-human", "--transport", "stdio"])
     monkeypatch.setattr(server, "initialize_time_locale", lambda: events.append("locale"))
     monkeypatch.setattr(server.mcp, "run", lambda transport: events.append(("run", transport)))
 

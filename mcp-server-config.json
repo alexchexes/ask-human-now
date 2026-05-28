@@ -1,10 +1,18 @@
 {
-  "ask-human-for-context-local": {
+  "ask-human": {
+    "command": "ask-human",
+    "args": ["--transport", "stdio"]
+  },
+  "ask-human-uvx": {
+    "command": "uvx",
+    "args": ["--from", "ask-human-now", "ask-human", "--transport", "stdio"]
+  },
+  "ask-human-local-dev": {
     "command": "python",
-    "args": ["server.py", "--transport", "stdio"],
-    "cwd": "/Users/galperetz/custom-mcp-servers/mcp-server-python-template",
+    "args": ["-m", "ask_human_now", "--transport", "stdio"],
+    "cwd": ".",
     "env": {
-      "PYTHONPATH": "/Users/galperetz/custom-mcp-servers/mcp-server-python-template"
+      "PYTHONPATH": "./src"
     }
   }
 }

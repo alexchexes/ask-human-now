@@ -3,7 +3,7 @@
 import asyncio
 from unittest.mock import patch
 
-from ask_human_for_context_mcp.server import GUIDialogHandler
+from ask_human_now.server import GUIDialogHandler
 
 
 class FakeProcess:

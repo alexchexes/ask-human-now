@@ -3,11 +3,13 @@
 import asyncio
 import platform
 from contextlib import suppress
+from pathlib import Path
 from typing import Any, Optional, cast
 
 from .prompt_formatting import resolve_dialog_title
 
 DEFAULT_DIALOG_TIMEOUT_SECONDS = 120
+PACKAGE_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 
 class UserPromptCancelled(Exception):
@@ -140,17 +142,11 @@ class GUIDialogHandler:
     async def _macos_dialog(
         self, question: str, timeout: int, *, cancel_event: Optional[asyncio.Event] = None
     ) -> Optional[str]:
-        """macOS dialog using osascript with custom Cursor icon."""
-        import os
+        """macOS dialog using osascript."""
+        icon_path = PACKAGE_ASSETS_DIR / "agent-asks.icns"
 
-        cursor_icon_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "assets",
-            "cursor-icon.icns",
-        )
-
-        if os.path.exists(cursor_icon_path):
-            icon_clause = f'with icon file (POSIX file "{cursor_icon_path}")'
+        if icon_path.exists():
+            icon_clause = f'with icon file (POSIX file "{icon_path}")'
         else:
             icon_clause = "with icon caution"
 
@@ -195,7 +191,7 @@ class GUIDialogHandler:
     async def _linux_dialog(
         self, question: str, timeout: int, *, cancel_event: Optional[asyncio.Event] = None
     ) -> Optional[str]:
-        """Linux dialog using zenity with custom Cursor logo."""
+        """Linux dialog using zenity."""
         icon_args = self._get_linux_icon_args()
 
         cmd = [
@@ -230,7 +226,7 @@ class GUIDialogHandler:
         *,
         run_in_thread: bool = False,
     ) -> Optional[str]:
-        """Windows dialog using tkinter with custom Cursor logo."""
+        """Windows dialog using tkinter."""
         if run_in_thread:
             return await asyncio.to_thread(self._windows_dialog_sync, question, timeout)
 
@@ -288,41 +284,22 @@ class GUIDialogHandler:
         return text.replace('"', '\\"').replace("\\", "\\\\")
 
     def _get_linux_icon_args(self) -> list[str]:
-        """Get icon arguments for Linux zenity dialog with custom Cursor logo."""
-        import os
-
-        custom_logo_paths = [
-            "./assets/Cursor Logo (4).png",
-            "./Cursor Logo (4).png",
-            "./assets/cursor-icon.png",
-            "./cursor-icon.png",
-        ]
-
-        for icon_path in custom_logo_paths:
-            if os.path.exists(icon_path):
-                print(f"✅ Using custom Cursor logo for Linux: {icon_path}")
-                return [f"--window-icon={icon_path}"]
+        """Get icon arguments for Linux zenity dialog."""
+        icon_path = PACKAGE_ASSETS_DIR / "agent-asks.png"
+        if icon_path.exists():
+            print(f"✅ Using Ask Human icon for Linux: {icon_path}")
+            return [f"--window-icon={icon_path}"]
 
         return ["--question"]
 
     def _set_windows_icon(self, root: Any) -> None:
-        """Set icon for Windows tkinter dialog with custom Cursor logo."""
-        import os
+        """Set icon for Windows tkinter dialog."""
+        icon_path = PACKAGE_ASSETS_DIR / "agent-asks.ico"
+        if not icon_path.exists():
+            return
 
-        possible_icon_paths = [
-            "./assets/cursor-icon.ico",
-            "./cursor-icon.ico",
-            "C:\\Program Files\\Cursor\\cursor.ico",
-        ]
-
-        for icon_path in possible_icon_paths:
-            if os.path.exists(icon_path):
-                try:
-                    print(f"✅ Using custom Cursor icon for Windows: {icon_path}")
-                    root.iconbitmap(icon_path)
-                    return
-                except Exception:
-                    continue
-
-        if os.path.exists("./assets/Cursor Logo (4).png"):
-            print("ℹ️ Found PNG logo. For Windows, convert to ICO format for icon support.")
+        try:
+            print(f"✅ Using Ask Human icon for Windows: {icon_path}")
+            root.iconbitmap(icon_path)
+        except Exception:
+            pass

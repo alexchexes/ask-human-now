@@ -9,9 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_TELEGRAM_POLL_TIMEOUT_SECONDS = 25
-DEFAULT_TELEGRAM_DOWNLOAD_DIR = (
-    Path(tempfile.gettempdir()) / "ask-human-for-context" / "telegram-downloads"
-)
+DEFAULT_TELEGRAM_DOWNLOAD_DIR = Path(tempfile.gettempdir()) / "ask-human-now" / "telegram-downloads"
 TELEGRAM_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024
 
 

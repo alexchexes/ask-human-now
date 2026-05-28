@@ -6,7 +6,7 @@ import locale
 import secrets
 from typing import Optional
 
-DEFAULT_DIALOG_TITLE = "🤖 Cursor AI Assistant"
+DEFAULT_DIALOG_TITLE = "Agent asks..."
 TELEGRAM_DOWNLOAD_LIMIT_LABEL = "20 MB"
 TELEGRAM_PROMPT_SEPARATOR = "─" * 12
 TIMING_INFO_TIMEOUT_NOTE = "client may time out sooner"

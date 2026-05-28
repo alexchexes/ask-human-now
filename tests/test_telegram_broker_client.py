@@ -3,9 +3,9 @@
 import asyncio
 import datetime as dt
 
-from ask_human_for_context_mcp.broker_state import TelegramBrokerHealth
-from ask_human_for_context_mcp.telegram_broker_client import TelegramBrokerClient
-from ask_human_for_context_mcp.telegram_models import TelegramConfig
+from ask_human_now.broker_state import TelegramBrokerHealth
+from ask_human_now.telegram_broker_client import TelegramBrokerClient
+from ask_human_now.telegram_models import TelegramConfig
 
 
 def test_broker_client_builds_prompt_with_broker_metadata(monkeypatch, tmp_path):

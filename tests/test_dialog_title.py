@@ -4,8 +4,8 @@ import os
 import subprocess
 import sys
 
-from ask_human_for_context_mcp.dialogs import GUIDialogHandler
-from ask_human_for_context_mcp.prompt_formatting import DEFAULT_DIALOG_TITLE, resolve_dialog_title
+from ask_human_now.dialogs import GUIDialogHandler
+from ask_human_now.prompt_formatting import DEFAULT_DIALOG_TITLE, resolve_dialog_title
 
 
 def test_resolve_dialog_title_defaults():
@@ -35,7 +35,7 @@ def test_help_mentions_dialog_title_option():
     )
 
     result = subprocess.run(
-        [sys.executable, "-m", "ask_human_for_context_mcp", "--help"],
+        [sys.executable, "-m", "ask_human_now", "--help"],
         capture_output=True,
         text=True,
         cwd=repo_root,
